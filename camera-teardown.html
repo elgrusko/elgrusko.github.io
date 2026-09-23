@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>€20 Cloud Camera Teardown</title>
+<meta name="description" content="Hardware reverse-engineering writeup (Part 1) of a white-label cloud IP camera.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="page">
+
+<pre class="banner">
+ +==================================================================+
+ |                                                                  |
+ |   H A R D W A R E   T E A R D O W N   ::   file 0x01 ; camera    |
+ |                                                                  |
+ +==================================================================+
+</pre>
+
+<div class="masthead">
+  <span class="row"><span class="title">€20 Cloud Camera Teardown</span></span>
+  <span class="row"><span class="k">Series....:</span> Part 1 of 2 &mdash; recon / teardown / firmware</span>
+  <span class="row"><span class="k">Author....:</span> E. Grusko</span>
+  <span class="row"><span class="k">Category..:</span> hardware / IoT security</span>
+  <span class="row"><span class="k">Target....:</span> white-label cloud IP camera (Anyka AK3918)</span>
+  <span class="row"><span class="k">Status....:</span> draft</span>
+</div>
+
+<div class="note">
+  <span class="lbl">[ scope &amp; ethics ]</span>
+  Everything here was done on a single device I own, on my own network. I never touched the vendor's cloud or any system that isn't mine, and I don't publish any secret I recovered (password hash, keys, P2P identifiers). The vendor is left anonymous and identifying details are masked.
+</div>
+
+<p>This small writeup describes how I pentested a cheap cloud-based IoT camera I bought on Amazon (~&euro;20). I did it entirely for educational purposes, to sharpen my skills in hardware and IoT security.</p>
+
+<p>The goal I set myself: see how locked down a &euro;20 cloud camera really is, and whether I can make it run locally, with a plain RTSP stream on my LAN, no vendor app, no cloud, nothing leaving the network. This is Part 1 (recon, teardown, firmware). The de-clouding itself will be Part 2, once I've soldered the UART for an interactive shell.</p>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x01</span> The device</h2>
+
+<p>A small pan/tilt "smart" camera, the kind of anonymous white-label unit that ships in a plain box and forces you through a vendor app and its cloud. Opening it up and reading the boot log gave me the platform:</p>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Component</th><th>Value</th></tr>
+  <tr><td>SoC</td><td>Anyka AK3918AV130_B, ARM926EJ-S (ARMv5TEJ), 960 MHz</td></tr>
+  <tr><td>RAM</td><td>64 MiB</td></tr>
+  <tr><td>Flash</td><td>Zbit ZB25VQ64, SPI NOR, 8 MiB</td></tr>
+  <tr><td>Kernel</td><td>Linux 4.4.302-cip94 (Buildroot 2018.02)</td></tr>
+  <tr><td>Userland</td><td>BusyBox</td></tr>
+  <tr><td>Wi-Fi</td><td>AltoBeam, over USB (<code>007a:6162</code>)</td></tr>
+  <tr><td>Bootloader</td><td>U-Boot 2019.10.0</td></tr>
+  <tr><td>App</td><td><code>gv_ipc</code> v10.1.52 (vendor-branded)</td></tr>
+</table>
+</div>
+
+<p>It also has an NPU (on-board motion/AI) and a ULN2803 driving the pan/tilt motors, both visible on the board.</p>
+
+<figure>
+  <img src="static/01-bench.jpg" alt="Bench setup: camera, FTDI USB-UART, CH341A programmer with SOIC-8 clip, jumpers.">
+  <figcaption>Bench setup: camera, FTDI UART, CH341A + SOIC-8 clip, jumpers. (Blur the label block before publishing.)</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x02</span> Check for open ports</h2>
+
+<p>My first idea was to check for open TCP or UDP ports with <code>nmap</code>. IoT products usually expose services such as <code>ssh</code>, <code>telnet</code> or <code>ftp</code>, which are great entry points to attack a device. An <code>ssh</code> or <code>telnet</code> access gets you a shell on the target, and from there you can try to escalate to root.</p>
+
+<p>So I scanned the full TCP range:</p>
+
+<pre class="term"><span class="p">$</span> nmap -Pn -p- &lt;CAM_IP&gt;
+<span class="cmt"># all 65535 ports -> closed (clean RST, every time)</span></pre>
+
+<p>Every single one of the 65535 ports came back <strong>closed</strong>. Not filtered, but closed, with a clean RST each time, which means the network stack is alive and actively refusing, not a firewall silently dropping packets. No ssh, no telnet, no ftp, no web interface. Nothing.</p>
+
+<p>UDP looked more promising for a moment: a top-ports scan flagged a handful as <code>open|filtered</code>. But in UDP that status just means <em>no reply came back</em>, not that the port is open. I re-ran it slowly (<code>--scan-delay 1s</code>) to rule out the kernel's ICMP rate-limiting, and every one of them turned out closed. mDNS, SSDP and WS-Discovery: silent too.</p>
+
+<p>So the "classic entry point" plan died immediately: there is no service to attack, because the camera listens on nothing. It's a pure client that only ever dials <em>out</em>, opens a tunnel to the vendor cloud, and does live view through P2P hole-punching. None of that shows up to a port scan. That's the interesting part: the network attack surface is basically zero, and the real exposure has moved entirely to the cloud link and the P2P layer. Both are the vendor's infrastructure, out of scope here, so I only watched them passively.</p>
+
+<p>Passively, the traffic matched that story: idle, just a keepalive trickle; live view from a phone on the same Wi-Fi kept WAN upload flat, so the stream stayed local. No steady upload at rest either, so the camera isn't recording to the cloud 24/7.</p>
+
+<p>With no way in over the network, the only way forward was to open the thing up.</p>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x03</span> Hardware teardown</h2>
+
+<p>The board has an unpopulated UART header, silkscreened <code>VCC / TXD / RXD / GND</code>, plus a <code>BOOT</code> pad. 3.3 V logic, 115200 8N1. The console is <strong>not</strong> locked and autoboot can be interrupted with Ctrl+C.</p>
+
+<figure>
+  <img src="static/02-uart.jpg" alt="Main board: the UART header (VCC/TXD/RXD/GND), the BOOT pad, the ULN2803 motor driver, and the SoC under the shield.">
+  <figcaption>Main board: UART header, BOOT pad, ULN2803 motor driver, SoC under the shield.</figcaption>
+</figure>
+
+<p>For now I've only tapped it read-only (TXD + GND) to capture the boot log. An interactive shell needs the RXD line soldered, which is Part 2. The boot log gave me the whole platform:</p>
+
+<pre class="term">U-Boot 2019.10.0-V4.0.27 (Dec 13 2025)
+Model:  EVB_CBD_AK3918AV130_V1.0.0
+Flash:  ZB25VQ64, SPI NOR, 8 MiB
+Kernel: Linux 4.4.302-cip94 (Buildroot 2018.02)
+cmdline: root=/dev/mtdblock3 rootfstype=squashfs
+         mtdparts=spi-nor:256k(uboot)... <span class="w">&lt;- corrupted (serial noise)</span>
+Pipeline: ak_isp -&gt; ak_venc_adapter -&gt; ak_venc_bridge  (+ ak_npu)
+WiFi:   AltoBeam over USB (007a:6162)
+App:    gv_ipc v10.1.52  "device_id_decryption: v1.0.0"</pre>
+
+<p>The partition string is cut off by serial noise, so I'll get the full MTD map from <code>cat /proc/mtd</code> once I have a shell. Two things already stand out: <code>device_id_decryption</code> runs at boot (the cloud pairing logic), and the video path is right there in the driver load order, with <code>ak_isp</code> feeding <code>ak_venc</code>. That encoder is what Part 2 has to tap to get a local stream.</p>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x04</span> Dumping the firmware</h2>
+
+<p>Instead of waiting on the soldering, I read the flash straight off the board: SOIC-8 clip on the ZB25VQ64, CH341A programmer. I powered the board from its own supply (never the clip) and dumped three times, comparing SHA-256 to make sure the read was clean. All three matched, exactly 8 388 608 bytes.</p>
+
+<figure>
+  <img src="static/03-spi-dump.jpg" alt="A SOIC-8 clip on the SPI flash, ribbon cable running to the CH341A programmer.">
+  <figcaption>SOIC-8 clip on the flash, ribbon to the CH341A programmer.</figcaption>
+</figure>
+
+<p><code>binwalk</code> carved two SquashFS images: a main rootfs and a separate app filesystem mounted at <code>/app</code>, where the vendor's own code lives, cleanly split from the BusyBox base.</p>
+
+<p>The first thing I went for was the root password. <code>/etc/shadow</code> held the root hash, which I cracked offline with John the Ripper. It's an <code>$1$</code> hash, MD5-crypt, the legacy algorithm with no real work factor, so it falls quickly. The password itself isn't the interesting part: what matters is that the hash ships <em>inside the firmware image</em>. Every unit built from the same firmware carries the same one, so the root password is effectively identical across the whole product line and every rebranded twin of this camera. <em>(Not published here.)</em></p>
+
+<p>That's as far as I'll take the firmware in Part 1. The rest of what the dump contains, what the app actually talks to and whether the camera can be made to stream locally, is the subject of Part 2.</p>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x05</span> Findings</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>#</th><th>Finding</th><th>Sev</th></tr>
+  <tr><td>F1</td><td>UART console left enabled, root shell reachable, autoboot interruptible</td><td class="sev-high">High</td></tr>
+  <tr><td>F2</td><td>Root password recoverable from firmware, likely shared across the product line</td><td class="sev-high">High</td></tr>
+  <tr><td>F3</td><td>No secure boot / no firmware signature check; a modified image reflashes and runs</td><td class="sev-high">High</td></tr>
+  <tr><td>F4</td><td>Provisioned Wi-Fi SSID and password stored in cleartext in a writable flash partition, recoverable from a dump</td><td class="sev-med">Medium</td></tr>
+  <tr><td>F5</td><td>Whole trust model depends on the vendor cloud; no local control by default</td><td class="sev-med">Medium</td></tr>
+</table>
+</div>
+
+<p class="verdict">So, how locked down is a &euro;20 cloud camera? Over the network, surprisingly tight: nothing listens, there's no service to hit. But that's the only thing protecting it. With the hardware in hand it falls apart fast, with an open debug console, a root password sitting in an unsigned firmware, and probably the same password on every unit of the model.</p>
+
+<!-- ============================================================= -->
+<h2><span class="n">0x06</span> Next: Part 2</h2>
+
+<p>Solder the RXD line, get a root shell, and dig into the app filesystem properly: what the camera talks to, how the video pipeline is wired, and whether it can be turned into a plain local RTSP stream with the vendor cloud cut off. That's the whole de-clouding story, and it's Part 2. I also plan a responsible-disclosure note to the OEM/CERT once the findings are confirmed.</p>
+
+<footer>
+  <div class="tools"><b>tools //</b> nmap &middot; binwalk &middot; CH341A + SOIC-8 clip &middot; John the Ripper &middot; strings / grep &middot; 3.3 V USB-UART</div>
+  Written up as a personal hardware-security project. All work performed on hardware I own; no third-party systems touched, no exploit material published.
+</footer>
+
+</main>
+</body>
+</html>

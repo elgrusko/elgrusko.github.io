@@ -1,0 +1,182 @@
+/* ===================================================================
+   camera-teardown  ::  phrack-style stylesheet
+   monospace, fixed column, black / white / red. no webfonts.
+   =================================================================== */
+
+:root{
+  --bg:#eceae2;
+  --ink:#1b1b1a;
+  --dim:#6c6a63;
+  --faint:#8f8d85;
+  --red:#c21d16;
+  --line:#c7c4ba;
+  --rule:#1b1b1a;
+}
+
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d0d0f;
+    --ink:#e7e4dd;
+    --dim:#8d8b83;
+    --faint:#6b6963;
+    --red:#e5372c;
+    --line:#2b2b2f;
+    --rule:#4a4a50;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d0d0f;
+  --ink:#e7e4dd;
+  --dim:#8d8b83;
+  --faint:#6b6963;
+  --red:#e5372c;
+  --line:#2b2b2f;
+  --rule:#4a4a50;
+}
+
+*{box-sizing:border-box}
+
+html,body{margin:0}
+
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:ui-monospace,"DejaVu Sans Mono","Courier New",Courier,monospace;
+  font-size:15px;
+  line-height:1.55;
+  -webkit-text-size-adjust:100%;
+}
+
+.page{
+  max-width:76ch;
+  margin:0 auto;
+  padding:26px 20px 90px;
+}
+
+a{color:var(--red);text-decoration:underline}
+a:hover{background:var(--red);color:var(--bg);text-decoration:none}
+
+::selection{background:var(--red);color:var(--bg)}
+
+/* ---- masthead ---- */
+pre.banner{
+  color:var(--red);
+  font-size:clamp(9px,2.1vw,13px);
+  line-height:1.2;
+  margin:0 0 4px;
+  overflow-x:auto;
+  white-space:pre;
+}
+.masthead{
+  border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+  padding:10px 0;
+  margin:14px 0 22px;
+}
+.masthead .row{display:block;white-space:pre-wrap}
+.masthead .k{color:var(--red)}
+.masthead .title{font-weight:700}
+
+/* ---- generic text ---- */
+p{margin:0 0 16px}
+strong{font-weight:700}
+em{font-style:italic;color:var(--ink)}
+
+code{color:var(--red);font-family:inherit}
+code::before{content:"`"}
+code::after{content:"`"}
+
+/* ---- section headings, phrack rule style ---- */
+h2{
+  font-size:15px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.02em;
+  margin:36px 0 16px;
+  padding-top:12px;
+  border-top:1px solid var(--rule);
+  overflow-wrap:break-word;
+}
+h2 .n{color:var(--red);font-weight:700}
+h2::before{content:"--[ "}
+h2::after{content:" ]--"}
+
+/* ---- boxes ---- */
+.note{
+  border:1px solid var(--red);
+  padding:11px 13px;
+  margin:0 0 22px;
+}
+.note .lbl{
+  color:var(--red);
+  font-weight:700;
+  display:block;
+  margin-bottom:5px;
+}
+
+pre.term{
+  border:1px solid var(--line);
+  padding:12px 14px;
+  margin:20px 0;
+  overflow-x:auto;
+  font-family:inherit;
+  font-size:13.5px;
+  line-height:1.5;
+  white-space:pre;
+  background:transparent;
+}
+pre.term .cmt{color:var(--faint)}
+pre.term .p{color:var(--red)}
+pre.term .w{color:var(--red);font-weight:700}
+
+/* ---- tables (plain, ruled) ---- */
+table{
+  border-collapse:collapse;
+  width:100%;
+  margin:20px 0;
+  font-size:14px;
+}
+th,td{
+  border:1px solid var(--line);
+  padding:5px 10px;
+  text-align:left;
+  vertical-align:top;
+}
+th{color:var(--red);font-weight:700;text-transform:uppercase;font-size:12px;letter-spacing:.05em}
+.sev-high{color:var(--red);font-weight:700}
+.sev-med{color:var(--dim)}
+.tbl-wrap{overflow-x:auto}
+
+/* ---- figures ---- */
+figure{margin:22px 0}
+figure img{
+  display:block;
+  max-width:100%;
+  border:1px solid var(--line);
+}
+figure figcaption{
+  color:var(--dim);
+  font-size:13px;
+  margin-top:6px;
+}
+figure figcaption::before{content:"[img] ";color:var(--red)}
+
+/* ---- lists ---- */
+ul{margin:16px 0;padding-left:0;list-style:none}
+ul li{padding-left:20px;position:relative;margin-bottom:8px}
+ul li::before{content:"*";color:var(--red);position:absolute;left:4px}
+
+/* ---- verdict / footer ---- */
+.verdict{border-left:2px solid var(--red);padding-left:14px;margin:24px 0}
+
+hr{border:0;border-top:1px solid var(--rule);margin:34px 0}
+
+footer{
+  border-top:1px solid var(--rule);
+  margin-top:40px;
+  padding-top:16px;
+  color:var(--dim);
+  font-size:13px;
+}
+footer .tools{color:var(--faint);margin-bottom:10px}
+footer .tools b{color:var(--red)}
